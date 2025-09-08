@@ -37,16 +37,12 @@ def compute_route_duration(start: int, job_locs: List[int], matrix: List[List[in
 def is_capacity_feasible(assigned_jobs: List[Job], capacity: int) -> bool:
     """
     Check if total delivery demand <= vehicle capacity.
-    Args:
-        assigned_jobs: List of Job objects assigned to vehicle
-        capacity: Vehicle capacity
-    Returns:
-        True if feasible, False otherwise
     """
     if capacity is None:  # Infinite capacity
         return True
     
     total_delivery = sum(job.delivery for job in assigned_jobs)
+    print(f"  📊 Kapasite kontrolü: {total_delivery}/{capacity}")
     return total_delivery <= capacity
 
 def brute_force_solve(vehicles: List[Vehicle], jobs: List[Job], matrix: List[List[int]]) -> OutputData:
@@ -59,72 +55,116 @@ def brute_force_solve(vehicles: List[Vehicle], jobs: List[Job], matrix: List[Lis
     Returns:
         OutputData with total duration and routes
     """
+    print(f"🔍 DEBUG: {len(vehicles)} Vehicle, {len(jobs)} job taken")
+    
+    for vehicle in vehicles:
+        print(f"🚗 Vehicle: ID={vehicle.id}, start_index={vehicle.start_index}, capacity={vehicle.capacity}")
+    
+    for job in jobs:
+        print(f"📦 Job: ID={job.id}, location_index={job.location_index}, delivery={job.delivery}, service={job.service}")
+    
     if not jobs:
-        # If there is no job, no calculation , saves time complexity
+        print("⚠️  Empty Job Input!")
         routes = {v.id: Route(jobs=[], delivery_duration=0) for v in vehicles}
         return OutputData(total_delivery_duration=0, routes=routes)
     
     job_ids = [j.id for j in jobs]
-    job_dict = {j.id: j for j in jobs}  
-    n = len(vehicles)
+    job_dict = {j.id: j for j in jobs}
+    n_vehicles = len(vehicles)
     min_total = float('inf')
     best_routes = {v.id: Route(jobs=[], delivery_duration=0) for v in vehicles}
 
-    def partition_jobs(remaining_jobs: List[str], current_assignment: List[List[str]], vehicle_idx: int):
-        nonlocal min_total, best_routes
-        
-        if vehicle_idx == n:
-            total_dur = 0
-            routes = {}
-            feasible = True
-            
-            for v_idx, (vehicle, assigned_ids) in enumerate(zip(vehicles, current_assignment)):
-                assigned_jobs = [job_dict[jid] for jid in assigned_ids]
-                
-                # Check capacity constraint
-                if not is_capacity_feasible(assigned_jobs, vehicle.capacity):
-                    feasible = False
-                    break
-                
-                if not assigned_ids:
-                    routes[vehicle.id] = Route(jobs=[], delivery_duration=0)
-                    continue
-                
-                # Optimize sequence for this vehicle
-                job_locs = [job_dict[jid].location_index for jid in assigned_ids]
-                services = [job_dict[jid].service for jid in assigned_ids] if any(job_dict[jid].service > 0 for jid in assigned_ids) else None
-                
-                min_route_dur = float('inf')
-                best_seq = []
-                
-                # Try all permutations of jobs for this vehicle , find the minimum duration
-                for perm in permutations(assigned_ids):
-                    perm_locs = [job_dict[jid].location_index for jid in perm]
-                    perm_services = [job_dict[jid].service for jid in perm] if services else None
-                    dur = compute_route_duration(vehicle.start_index, perm_locs, matrix, perm_services)
-                    
-                    if dur < min_route_dur:
-                        min_route_dur = dur
-                        best_seq = list(perm)
-                
-                total_dur += min_route_dur
-                routes[vehicle.id] = Route(jobs=best_seq, delivery_duration=min_route_dur)
-            
-            if feasible and total_dur < min_total:
-                min_total = total_dur
-                best_routes = routes
+    print(f"🔄 Trying every possible route for ... ({n_vehicles} vehicle)")
+    
+    def generate_all_assignments(job_list, num_vehicles):
+        """
+        İşlerin atanması için tüm rotaları dener
+        """
+        if not job_list:
+            yield [[] for _ in range(num_vehicles)]
             return
+        
+        first_job = job_list[0]
+        remaining_jobs = job_list[1:]
+        
+        # Assing the first job to every vehicle 
+        for vehicle_idx in range(num_vehicles):
+            for assignment in generate_all_assignments(remaining_jobs, num_vehicles):
+                assignment[vehicle_idx].append(first_job)
+                yield assignment
 
-        # Generate all possible subsets for current vehicle
-        for k in range(len(remaining_jobs) + 1):
-            for subset in combinations(remaining_jobs, k):
-                subset_list = list(subset)
-                new_remaining = [j for j in remaining_jobs if j not in subset_list]
-                partition_jobs(new_remaining, current_assignment + [subset_list], vehicle_idx + 1)
-
-    partition_jobs(job_ids, [], 0)
+    assignment_count = 0
+    best_assignment = None
+    
+    for assignment in generate_all_assignments(job_ids, n_vehicles):
+        assignment_count += 1
+        
+        total_duration = 0
+        routes = {}
+        feasible = True
+        
+        # Calculate every route for every vehicle
+        for vehicle_idx, vehicle in enumerate(vehicles):
+            assigned_job_ids = assignment[vehicle_idx]
+            assigned_jobs = [job_dict[jid] for jid in assigned_job_ids]
+            
+            # Capacity check
+            if not is_capacity_feasible(assigned_jobs, vehicle.capacity):
+                feasible = False
+                break
+            
+            if not assigned_job_ids:
+                # Empty car
+                routes[vehicle.id] = Route(jobs=[], delivery_duration=0)
+                continue
+            
+            # Find the best sequence
+            min_route_duration = float('inf')
+            best_sequence = []
+            
+            # Check all permutations
+            for perm in permutations(assigned_job_ids):
+                perm_jobs = [job_dict[jid] for jid in perm]
+                perm_locs = [job.location_index for job in perm_jobs]
+                perm_services = [job.service for job in perm_jobs]
+                
+                duration = compute_route_duration(
+                    vehicle.start_index, 
+                    perm_locs, 
+                    matrix, 
+                    perm_services
+                )
+                
+                if duration < min_route_duration:
+                    min_route_duration = duration
+                    best_sequence = list(perm)
+            
+            total_duration += min_route_duration
+            routes[vehicle.id] = Route(jobs=best_sequence, delivery_duration=min_route_duration)
+        
+        if feasible and total_duration < min_total:
+            min_total = total_duration
+            best_routes = routes
+            best_assignment = assignment
+            print(f"✅ Found a better one ! Total Duration: {min_total} second")
+            
+            # Print the best sequence
+            for vehicle_idx, vehicle in enumerate(vehicles):
+                assigned = assignment[vehicle_idx]
+                if assigned:
+                    print(f"  🚗 {vehicle.id}: {assigned}")
+                else:
+                    print(f"  🚗 {vehicle.id}: Empty")
+    
+    print(f"🏁 Total of  {assignment_count} sequence tried")
+    print(f"🎯 Best duration: {min_total} second")
+    
+    if min_total == float('inf'):
+        print("❌ No solution found !")
+        return OutputData(total_delivery_duration=0, routes={v.id: Route(jobs=[], delivery_duration=0) for v in vehicles})
     
     return OutputData(total_delivery_duration=int(min_total), routes=best_routes)
+
 
 @app.post("/solve", response_model=OutputData)
 async def solve_routes(input_data: InputData):
@@ -166,6 +206,36 @@ async def solve_routes(input_data: InputData):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
+def simple_test():
+    """
+    Simple Test
+    """
+    vehicles = [
+        Vehicle(id="v1", start_index=0, capacity=100),
+        Vehicle(id="v2", start_index=0, capacity=100)
+    ]
+    
+    jobs = [
+        Job(id="j1", location_index=1, delivery=30, service=300),
+        Job(id="j2", location_index=2, delivery=40, service=600)
+    ]
+    
+    matrix = [
+        [0, 600, 900],    # Depot
+        [600, 0, 300],    # Nokta 1
+        [900, 300, 0]     # Nokta 2
+    ]
+    
+    result = brute_force_solve(vehicles, jobs, matrix)
+    
+
+    print(f"   Total Duration: {result.total_delivery_duration} second")
+    for vehicle_id, route in result.routes.items():
+        print(f"   {vehicle_id}: {route.jobs} - {route.delivery_duration} second")
+    
+    return result
+
 if __name__ == "__main__":
     import uvicorn
+    simple_test()
     uvicorn.run(app, host="0.0.0.0", port=8000)
