@@ -1,6 +1,9 @@
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 
+## Classes for input and output 
+## Pydantic for preventing missmatch in input and output
+
 class Vehicle(BaseModel):
     id: str
     start_index: int  
